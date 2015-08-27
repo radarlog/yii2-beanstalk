@@ -1,0 +1,24 @@
+{
+    "name": "radarlog/yii2-beanstalk",
+    "description": "Beanstalk component for Yii Framework 2",
+    "keywords": ["queue", "yii2", "beanstalk", "beanstalkd"],
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Ilian Ranguelov",
+            "email": "me@radarlog.net",
+            "homepage": "https://radarlog.net/"
+        }
+    ],
+    "require": {
+        "php": ">=5.4.0",
+        "yiisoft/yii2": "*",
+        "davidpersson/beanstalk" : "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "yii\\beanstalk\\": "/"
+        }
+    }
+}
