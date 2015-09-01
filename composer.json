@@ -2,13 +2,16 @@
     "name": "radarlog/yii2-beanstalk",
     "description": "Beanstalk component for Yii Framework 2",
     "keywords": ["queue", "yii2", "beanstalk", "beanstalkd"],
-    "type": "library",
+    "type": "yii2-extension",
     "license": "MIT",
+    "support": {
+        "issues": "https://github.com/radarlog/yii2-beanstalk/issues",
+        "source": "https://github.com/radarlog/yii2-beanstalk"
+    },
     "authors": [
         {
             "name": "Ilian Ranguelov",
-            "email": "me@radarlog.net",
-            "homepage": "https://radarlog.net/"
+            "email": "me@radarlog.net"
         }
     ],
     "require": {

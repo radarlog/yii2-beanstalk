@@ -5,7 +5,6 @@ namespace yii\beanstalk;
 use Yii;
 use yii\console\Controller;
 use yii\helpers\Console;
-use RuntimeException;
 
 class ConsoleController extends Controller
 {
@@ -13,41 +12,28 @@ class ConsoleController extends Controller
     const DELETE = "delete";
     const RELEASE = "release";
 
-    const RESERVE_TIMEOUT = 5;
-
     public $defaultAction = 'default';
     public $sleep = 0; //in micro seconds
 
-    private $_isWorking = false;
+    private $tubeActions = []; //tubes as keys and action handler as values
     private $_stopWorking = false;
 
     public function beforeAction($action)
     {
-        if (!parent::beforeAction($action))
-            return false;
-
-        $this->regSigHandler();
-
-        $tube = $action->id;
         try {
             $beanstalk = Yii::$app->beanstalk;
-            $tubes = $beanstalk->listTubes();
-            if (in_array($tube, $tubes)) {
-                $beanstalk->watch($tube);
-                $this->stdout($this->ansiFormat("Watching {$tube} tube\n", Console::FG_YELLOW));
-            } else {
-                $this->stdout($this->ansiFormat("Unable to watch {$tube} tube\n", Console::FG_RED));
-                return false;
-            }
+            $this->setTubeActions($beanstalk);
 
             while (!$this->_stopWorking) {
-                $job = $beanstalk->reserve(static::RESERVE_TIMEOUT); //unblock stream
-                if (!$job)
+                $job = $beanstalk->reserve();
+                if (!$job || !array_key_exists($tube = $beanstalk->statsJob($job->id)->tube, $this->tubeActions))
                     continue;
 
-                $this->_isWorking = true;
-                $response = call_user_func([$this, $action->actionMethod], $job); //run action
-                switch ($response) {
+                $actionMethod = $this->tubeActions[$tube];
+
+                $this->setSigHandler(); //start working
+                $result = call_user_func([$this, $actionMethod], $job); //run action
+                switch ($result) {
                     case self::RELEASE:
                         $beanstalk->release($job->id, $beanstalk::DEFAULT_PRIORITY, $beanstalk::DEFAULT_DELAY);
                         break;
@@ -59,46 +45,76 @@ class ConsoleController extends Controller
                         $beanstalk->bury($job->id, $beanstalk::DEFAULT_PRIORITY);
                         break;
                 }
-                $this->_isWorking = false;
+                $this->setSigDefault(); //end working
 
                 if ($this->sleep)
                     usleep($this->sleep);
             }
-        } catch (RuntimeException $e) {
-            Yii::error($e->getMessage());
-            return false;
+        } catch (BeanstalkException $e) {
+            $this->stdout($this->ansiFormat("{$e->getMessage()} Exit.\n", Console::FG_RED));
         }
 
         return false;
     }
 
-    public function regSigHandler()
+    private function setSigDefault()
     {
-        if (!extension_loaded('pcntl')) {
-            $this->stdout($this->ansiFormat("Signal Handling Disabled!\n", Console::FG_YELLOW));
+        if (!extension_loaded('pcntl'))
             return false;
-        }
+
+        pcntl_signal(SIGTERM, SIG_DFL);
+        pcntl_signal(SIGINT, SIG_DFL);
+        return true;
+    }
+
+    private function setSigHandler()
+    {
+        if (!extension_loaded('pcntl'))
+            return false;
+
         declare (ticks = 1);
         pcntl_signal(SIGTERM, [$this, 'sigHandler']);
         pcntl_signal(SIGINT, [$this, 'sigHandler']);
-        $this->stdout($this->ansiFormat("Signal Handling Registered!\n", Console::FG_YELLOW));
         return true;
     }
 
     public function sigHandler($signo)
     {
-        $this->stdout($this->ansiFormat("Received {$signo} signal\n", Console::FG_YELLOW));
         switch ($signo) {
             case SIGTERM:
             case SIGINT:
                 $this->stdout($this->ansiFormat("Will exit after current job done\n", Console::FG_RED));
-                if (!$this->_isWorking)
-                    Yii::$app->end();
-
                 $this->_stopWorking = true;
                 break;
             default:
                 break;
         }
+    }
+
+    private function setTubeActions(Beanstalk $beanstalk)
+    {
+        $params = Yii::$app->request->getParams();
+        array_shift($params); //shift controller/action
+
+        $tubes = $params ? $params : $beanstalk->listTubes(); //listen all existed tubes if not set any
+
+        foreach($tubes as $tube) {
+            if ($beanstalk->watch($tube)) {
+                $this->stdout($this->ansiFormat("Watching {$tube} tube\n", Console::FG_YELLOW));
+                $methodName = $this->tube2action($tube);
+                $this->tubeActions[$tube] = $this->hasMethod($methodName) ? $methodName : $this->tube2action($this->defaultAction);
+            }
+        }
+    }
+
+    protected function tube2action($tube)
+    {
+        return 'action' . str_replace(' ', '', ucwords(implode(' ', explode('-', $tube))));
+    }
+
+    public function actionDefault($job) {
+        $this->stdout("Done {$job->id} job\n");
+
+        return self::DELETE;
     }
 }

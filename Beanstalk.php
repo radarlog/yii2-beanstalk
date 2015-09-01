@@ -5,7 +5,6 @@ namespace yii\beanstalk;
 use Yii;
 use yii\base\Component;
 use Beanstalk\Client;
-use RuntimeException;
 
 class Beanstalk extends Component
 {
@@ -18,7 +17,6 @@ class Beanstalk extends Component
     public $timeout = 1;
     public $persistent = true;
     public $connected = false;
-    public $logger = null;
 
     private $_usedTube;
     protected $_client;
@@ -32,47 +30,43 @@ class Beanstalk extends Component
             'host' => $this->host,
             'port' => $this->port,
             'timeout' => $this->timeout,
-            'logger' => $this->logger,
+            'logger' => $this,
         ]);
 
         $this->_client->connect();
         $this->connected = $this->_client->connected;
+        if(!$this->connected)
+            throw new BeanstalkException('Is beanstalkd running?');
+    }
+
+    public function error($message, array $context = [])
+    {
+        Yii::error($message, __METHOD__); //log all errors
     }
 
     public function put($data, $tube = 'default', $pri = self::DEFAULT_PRIORITY, $delay = self::DEFAULT_DELAY, $ttr = self::DEFAULT_TTR)
     {
-        try {
-            if ($tube != $this->_usedTube) {
-                $this->_client->useTube($tube);
-                $this->_usedTube = $tube;
-            }
-
-            if (is_array($data))
-                $data = json_encode($data); //stringify;
-
-            return $this->_client->put($pri, $delay, $ttr, $data);
-        } catch (RuntimeException $e) {
-            Yii::error($e->getMessage());
-            return false;
+        if ($tube != $this->_usedTube) {
+            $this->_client->useTube($tube);
+            $this->_usedTube = $tube;
         }
 
+        if (is_array($data))
+            $data = json_encode($data); //stringify;
+
+        return $this->_client->put($pri, $delay, $ttr, $data);
     }
 
     public function __call($name, $args)
     {
-        try {
-            $response = call_user_func_array([$this->_client, $name], $args);
-            return $this->checkNeedConvert($name, $response);
-        } catch (RuntimeException $e) {
-            Yii::error($e->getMessage());
-            return false;
-        }
+        $response = call_user_func_array([$this->_client, $name], $args);
+        return $this->arrayToObject($name, $response);
     }
 
-    protected function checkNeedConvert($name, $response)
+    protected function arrayToObject($name, $response)
     {
-        $needConvert = ['reserve', 'peekReady', 'peekDelayed', 'peekBuried'];
-        if (in_array($name, $needConvert) && is_array($response)) {
+        $job2object = ['reserve', 'peekReady', 'peekDelayed', 'peekBuried'];
+        if (in_array($name, $job2object) && is_array($response)) {
             $object = new \stdClass();
             $object->id = $response['id'];
             $object->data = json_decode($response['body']); //try convert
@@ -81,6 +75,11 @@ class Beanstalk extends Component
 
             $response = $object;
         }
+
+        $stats2object = ['statsJob', 'statsTube', 'stats'];
+        if (in_array($name, $stats2object) && is_array($response))
+            $response = (object)$response;
+
         return $response;
     }
 }
